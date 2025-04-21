@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RL Pong - AI Only (50k)</title> <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Press Start 2P', cursive;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #1a202c; /* Dark background */
+            color: #cbd5e0; /* Light text */
+            flex-direction: column;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            border: 4px solid #4a5568; /* Gray border */
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5); /* Cyan glow */
+            max-width: 90vw; /* Responsive width */
+            max-height: 70vh; /* Responsive height */
+            aspect-ratio: 4 / 3; /* Maintain aspect ratio */
+            image-rendering: pixelated; /* Keep pixels sharp */
+            image-rendering: crisp-edges;
+        }
+        .controls, .info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            font-family: 'Press Start 2P', cursive;
+            background-color: #2d3748; /* Darker gray */
+            color: #e2e8f0; /* Lighter gray */
+            border: 2px solid #4a5568;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px #1a202c; /* Button shadow */
+            transform: translateY(0);
+            font-size: 0.9em; /* Slightly smaller button text */
+        }
+        button:hover {
+            background-color: #4a5568;
+            color: #fff;
+        }
+         button:active {
+            box-shadow: 0 2px #1a202c;
+            transform: translateY(2px);
+        }
+         button:disabled {
+            background-color: #1a202c;
+            color: #4a5568;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: translateY(0);
+        }
+        .score {
+            font-size: 2em;
+            margin-bottom: 10px;
+            color: #63b3ed; /* Blue score */
+            text-shadow: 0 0 5px #63b3ed;
+        }
+        .stats {
+            font-size: 0.8em;
+            color: #a0aec0; /* Medium gray */
+            min-height: 20px; /* Prevent layout shift */
+        }
+         /* Simple message box */
+        #message-box {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(45, 55, 72, 0.9); /* Semi-transparent dark gray */
+            color: #e2e8f0;
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 2px solid #4a5568;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            z-index: 100;
+            display: none; /* Hidden by default */
+            font-size: 1.2em;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div class="score">
+            <span id="player-score">0</span> - <span id="opponent-score">0</span>
+        </div>
+        <canvas id="pongCanvas" width="800" height="600"></canvas>
+         <div id="message-box">Game Paused</div>
+         <div class="controls">
+            <button id="train-button">Train AI</button>
+             <button id="play-ai-button">Play vs AI</button>
+            <button id="reset-button">Reset</button>
+        </div>
+        <div class="info stats">
+             Status: <span id="status">Idle</span> |
+             Episode: <span id="episode-count">0</span> |
+             Epsilon: <span id="epsilon-value">N/A</span> |
+             Avg Reward: <span id="avg-reward">N/A</span>
+        </div>
+    </div>
+
+    <script>
+        // --- Game Constants ---
+        const canvas = document.getElementById('pongCanvas');
+        const ctx = canvas.getContext('2d');
+        const PADDLE_HEIGHT = 100;
+        const PADDLE_WIDTH = 15;
+        const BALL_RADIUS = 10;
+        const PADDLE_SPEED = 8; // Speed for opponent paddle
+        const WINNING_SCORE = 3;
+        const AI_PADDLE_SPEED = 6;
+
+        // --- Game State ---
+        let ballX, ballY, ballSpeedX, ballSpeedY;
+        let playerY, opponentY; // playerY is AI paddle
+        let playerScore = 0;
+        let opponentScore = 0;
+        let gameRunning = false; // Is the Play vs AI game loop active?
+        let aiControlled = false; // Is AI active (Training or Playing)?
+        let trainingMode = false; // Is the training loop active?
+        let animationFrameId = null;
+        let trainingIntervalId = null;
+
+        // --- Elements ---
+        const playerScoreElem = document.getElementById('player-score');
+        const opponentScoreElem = document.getElementById('opponent-score');
+        const trainButton = document.getElementById('train-button');
+        const playAiButton = document.getElementById('play-ai-button');
+        const resetButton = document.getElementById('reset-button');
+        const statusElem = document.getElementById('status');
+        const episodeCountElem = document.getElementById('episode-count');
+        const epsilonValueElem = document.getElementById('epsilon-value');
+        const avgRewardElem = document.getElementById('avg-reward');
+        const messageBox = document.getElementById('message-box');
+
+
+        // --- RL Agent ---
+        class QLearningAgent {
+             // Adjusted explorationDecay for 50k episodes
+            constructor(actions, learningRate = 0.1, discountFactor = 0.95, explorationRate = 1.0, explorationDecay = 0.99995, minExploration = 0.01) {
+                this.qTable = {}; this.actions = actions; this.lr = learningRate; this.gamma = discountFactor; this.epsilon = explorationRate; this.epsilonDecay = explorationDecay; this.epsilonMin = minExploration; this.canvasWidth = 800; this.canvasHeight = 600; this.paddleHeight = 100;
+            }
+            discretizeState(gameState) {
+                 if (typeof gameState === 'undefined') { console.error("!!! discretizeState received undefined gameState !!!"); gameState = { ballX: 0, ballY: 0, ballSpeedX: 0, ballSpeedY: 0, playerY: 0 }; }
+                const { ballX, ballY, ballSpeedX, ballSpeedY, playerY } = gameState;
+                const ballXBuckets = 12; const ballYBuckets = 12; const playerYBuckets = 12; const speedXSign = Math.sign(ballSpeedX); const speedYSign = Math.sign(ballSpeedY);
+                const bx_norm = ballX / this.canvasWidth; const by_norm = ballY / this.canvasHeight; const clampedPlayerY = Math.max(0, Math.min(this.canvasHeight - this.paddleHeight, playerY));
+                const py_norm = (this.canvasHeight - this.paddleHeight === 0) ? 0 : clampedPlayerY / (this.canvasHeight - this.paddleHeight);
+                const bx_discrete = Math.max(0, Math.min(ballXBuckets - 1, Math.floor(bx_norm * ballXBuckets))); const by_discrete = Math.max(0, Math.min(ballYBuckets - 1, Math.floor(by_norm * ballYBuckets))); const py_discrete = Math.max(0, Math.min(playerYBuckets - 1, Math.floor(py_norm * playerYBuckets)));
+                const relativeY = ballY - (clampedPlayerY + this.paddleHeight / 2); let relativeYDiscrete;
+                if (relativeY > this.paddleHeight * 0.3) relativeYDiscrete = 2; else if (relativeY < -this.paddleHeight * 0.3) relativeYDiscrete = 0; else relativeYDiscrete = 1;
+                const stateKey = `${bx_discrete}_${by_discrete}_${speedXSign}_${speedYSign}_${py_discrete}_${relativeYDiscrete}`; return stateKey;
+            }
+            getQValue(state, action) { if (!this.qTable[state]) { this.qTable[state] = {}; this.actions.forEach(act => this.qTable[state][act] = 0); } return this.qTable[state][action] ?? 0; }
+            chooseAction(state) { if (!this.qTable[state]) { this.qTable[state] = {}; this.actions.forEach(action => this.qTable[state][action] = 0); } if (Math.random() < this.epsilon) { return this.actions[Math.floor(Math.random() * this.actions.length)]; } else { let bestAction = this.actions[0]; let maxQ = this.getQValue(state, bestAction); for (let i = 1; i < this.actions.length; i++) { const action = this.actions[i]; const qValue = this.getQValue(state, action); if (qValue > maxQ) { maxQ = qValue; bestAction = action; } } const bestActions = this.actions.filter(action => this.getQValue(state, action) === maxQ); return bestActions[Math.floor(Math.random() * bestActions.length)]; } }
+            update(state, action, reward, nextState) { if (!this.qTable[state]) this.qTable[state] = {}; if (this.qTable[state][action] === undefined) this.qTable[state][action] = 0; if (!this.qTable[nextState]) { this.qTable[nextState] = {}; this.actions.forEach(act => this.qTable[nextState][act] = 0); } const nextActionValues = Object.values(this.qTable[nextState]); const maxNextQ = nextActionValues.length > 0 ? Math.max(...nextActionValues) : 0; const currentQ = this.qTable[state][action]; const newQ = currentQ + this.lr * (reward + this.gamma * maxNextQ - currentQ); this.qTable[state][action] = newQ; }
+            decayEpsilon() { this.epsilon = Math.max(this.epsilonMin, this.epsilon * this.epsilonDecay); }
+        } // End QLearningAgent Class
+
+        // --- Instantiate Agent ---
+        const agentActions = ['UP', 'DOWN', 'STAY'];
+        const rlAgent = new QLearningAgent(agentActions);
+        rlAgent.canvasWidth = canvas.width; rlAgent.canvasHeight = canvas.height; rlAgent.paddleHeight = PADDLE_HEIGHT;
+
+        // --- Utility Functions ---
+        function showMessage(message, duration = 2000) { messageBox.textContent = message; messageBox.style.display = 'block'; if (duration > 0) { setTimeout(() => { messageBox.style.display = 'none'; }, duration); } }
+        function resetBall(serveToPlayer = true) { ballX = canvas.width / 2; ballY = canvas.height / 2; let angle = Math.random() * Math.PI / 2 - Math.PI / 4; if (!serveToPlayer || Math.random() > 0.5) angle += Math.PI; ballSpeedX = 6 * Math.cos(angle); ballSpeedY = 6 * Math.sin(angle); }
+        function resetBoardState() { playerScore = 0; opponentScore = 0; playerScoreElem.textContent = playerScore; opponentScoreElem.textContent = opponentScore; playerY = canvas.height / 2 - PADDLE_HEIGHT / 2; opponentY = canvas.height / 2 - PADDLE_HEIGHT / 2; resetBall(true); }
+        function resetEpisode() { resetBoardState(); return getCurrentState(); }
+        function resetGame() { console.log("Resetting game..."); stopTraining(); stopGame(); gameRunning = false; aiControlled = false; trainingMode = false; resetBoardState(); statusElem.textContent = "Idle"; episodeCountElem.textContent = "0"; epsilonValueElem.textContent = rlAgent.epsilon.toFixed(3); avgRewardElem.textContent = "N/A"; drawEverything(); enableButtons(); showMessage("Game Reset!", 1500); }
+
+        // --- Drawing Functions ---
+        function drawRect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
+        function drawCircle(x, y, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2, true); ctx.fill(); }
+        function drawNet() { for (let i = 0; i < canvas.height; i += 40) { drawRect(canvas.width / 2 - 1, i, 2, 20, '#63b3ed'); } }
+        function drawEverything() { drawRect(0, 0, canvas.width, canvas.height, '#000'); drawNet(); drawRect(0, playerY, PADDLE_WIDTH, PADDLE_HEIGHT, '#e2e8f0'); drawRect(canvas.width - PADDLE_WIDTH, opponentY, PADDLE_WIDTH, PADDLE_HEIGHT, '#e2e8f0'); drawCircle(ballX, ballY, BALL_RADIUS, '#f56565'); }
+
+        // --- Game Logic & State ---
+        function getCurrentState() { return { ballX, ballY, ballSpeedX, ballSpeedY, playerY, opponentY }; }
+
+        // --- AI Action --- (Only AI action needed now)
+        function performAction(action) { if (action === 'UP') playerY -= AI_PADDLE_SPEED; else if (action === 'DOWN') playerY += AI_PADDLE_SPEED; playerY = Math.max(0, Math.min(canvas.height - PADDLE_HEIGHT, playerY)); }
+
+
+        // --- Core Game Step --- (Unchanged)
+        function gameStep() {
+            if (!gameRunning && !trainingMode) return { nextState: getCurrentState(), reward: 0, done: true };
+            let reward = 0; let done = false; const prevBallX = ballX;
+            ballX += ballSpeedX; ballY += ballSpeedY;
+            if (ballY - BALL_RADIUS < 0 || ballY + BALL_RADIUS > canvas.height) { ballSpeedY = -ballSpeedY; ballSpeedX += (Math.random() - 0.5) * 0.5; ballY = Math.max(BALL_RADIUS, Math.min(canvas.height - BALL_RADIUS, ballY)); }
+            if (ballX - BALL_RADIUS < PADDLE_WIDTH && prevBallX >= PADDLE_WIDTH) { if (ballY > playerY && ballY < playerY + PADDLE_HEIGHT) { ballSpeedX = -ballSpeedX; let deltaY = ballY - (playerY + PADDLE_HEIGHT / 2); ballSpeedY = deltaY * 0.35; reward = 1; } else { opponentScore++; opponentScoreElem.textContent = opponentScore; reward = -10; done = checkWin(); if (!done) resetBall(false); } }
+            if (ballX + BALL_RADIUS > canvas.width - PADDLE_WIDTH && prevBallX <= canvas.width - PADDLE_WIDTH) { if (ballY > opponentY && ballY < opponentY + PADDLE_HEIGHT) { ballSpeedX = -ballSpeedX; let deltaY = ballY - (opponentY + PADDLE_HEIGHT / 2); ballSpeedY = deltaY * 0.35; } else { playerScore++; playerScoreElem.textContent = playerScore; reward = 10; done = checkWin(); if (!done) resetBall(true); } }
+             const opponentCenter = opponentY + PADDLE_HEIGHT / 2; const opponentTargetY = ballY; if (opponentCenter < opponentTargetY - PADDLE_HEIGHT * 0.2) opponentY += PADDLE_SPEED * 0.8; else if (opponentCenter > opponentTargetY + PADDLE_HEIGHT * 0.2) opponentY -= PADDLE_SPEED * 0.8; opponentY = Math.max(0, Math.min(canvas.height - PADDLE_HEIGHT, opponentY));
+             return { nextState: getCurrentState(), reward: trainingMode ? reward : 0, done: done };
+        }
+
+         // --- Player Control (Mouse) --- REMOVED ---
+
+
+        // --- Win Condition --- (Simplified winner text)
+        function checkWin() {
+            if (playerScore >= WINNING_SCORE || opponentScore >= WINNING_SCORE) {
+                const winner = playerScore >= WINNING_SCORE ? "AI Agent" : "Opponent";
+                 if (!trainingMode) { showMessage(`${winner} Wins!`, 0); }
+                 return true;
+            }
+            return false;
+        }
+
+        // --- Game Loop (for playing vs AI) --- (Simplified - assumes AI control)
+        function gameLoop() {
+            if (!gameRunning) { animationFrameId = null; return; }
+            const state = getCurrentState(); const discreteState = rlAgent.discretizeState(state);
+            const action = rlAgent.chooseAction(discreteState); performAction(action);
+            const { done } = gameStep(); drawEverything();
+            if (done) { gameRunning = false; statusElem.textContent = "Game Over"; enableButtons(); }
+            if (gameRunning) { animationFrameId = requestAnimationFrame(gameLoop); }
+            else { animationFrameId = null; }
+        }
+
+        // --- Training Loop ---
+        let currentEpisode = 0;
+        const totalEpisodes = 50000; // --- INCREASED EPISODES ---
+        const maxStepsPerEpisode = 1000;
+        let episodeRewards = [];
+        const avgRewardWindow = 200; // --- INCREASED WINDOW ---
+
+        function runTrainingEpisode() {
+            if (!trainingMode || currentEpisode >= totalEpisodes) { stopTraining(); showMessage(`Training finished after ${currentEpisode} episodes.`, 3000); return; }
+            let state = resetEpisode(); let discreteState = rlAgent.discretizeState(state); let episodeReward = 0; let steps = 0;
+            while (steps < maxStepsPerEpisode) {
+                const action = rlAgent.chooseAction(discreteState); performAction(action);
+                const gameStepResult = gameStep(); const { nextState, reward, done } = gameStepResult;
+                if (typeof nextState === 'undefined') { console.error(`!!! FATAL: nextState is undefined after gameStep() in Episode ${currentEpisode}, Step ${steps} !!!`); stopTraining(); showMessage("Fatal error during training. Check console.", 0); return; }
+                const nextDiscreteState = rlAgent.discretizeState(nextState); rlAgent.update(discreteState, action, reward, nextDiscreteState);
+                episodeReward += reward; state = nextState; discreteState = nextDiscreteState; steps++;
+                if (done) break;
+            }
+            rlAgent.decayEpsilon(); episodeRewards.push(episodeReward);
+            if (episodeRewards.length > avgRewardWindow) { episodeRewards.shift(); }
+            // --- Update UI less frequently ---
+            if (currentEpisode % 100 === 0 || currentEpisode === totalEpisodes -1) { // Update every 100 episodes
+                 const avgReward = episodeRewards.length > 0 ? episodeRewards.reduce((a, b) => a + b, 0) / episodeRewards.length : 0;
+                 statusElem.textContent = `Training... (${Math.round(((currentEpisode+1) / totalEpisodes) * 100)}%)`;
+                 episodeCountElem.textContent = currentEpisode + 1;
+                 epsilonValueElem.textContent = rlAgent.epsilon.toFixed(4);
+                 avgRewardElem.textContent = avgReward.toFixed(2);
+                 drawEverything();
+            }
+            currentEpisode++; trainingIntervalId = setTimeout(runTrainingEpisode, 0);
+        }
+
+        function startTraining() {
+             if (trainingMode) return; console.log("Starting AI training..."); stopGame(); trainingMode = true; aiControlled = true; rlAgent.epsilon = 1.0; epsilonValueElem.textContent = rlAgent.epsilon.toFixed(3); currentEpisode = 0; episodeRewards = []; resetBoardState(); statusElem.textContent = "Training...";
+             disableButtons(); resetButton.disabled = false; runTrainingEpisode(); console.log("runTrainingEpisode() called from startTraining");
+        }
+
+        function stopTraining() { if (!trainingMode) return; console.log("Stopping training..."); if (trainingIntervalId) { clearTimeout(trainingIntervalId); trainingIntervalId = null; } trainingMode = false; statusElem.textContent = "Training Stopped"; enableButtons(); }
+
+        // --- Simplified startGame for AI Only ---
+        function startGame() {
+            if (gameRunning || trainingMode) return; stopTraining(); stopGame(); console.log(`Starting game... AI Playing: true`); resetBoardState(); gameRunning = true; aiControlled = true; statusElem.textContent = "Playing vs AI"; epsilonValueElem.textContent = rlAgent.epsilon.toFixed(3); messageBox.style.display = 'none'; disableButtons(); resetButton.disabled = false; if (!animationFrameId) { gameLoop(); }
+        }
+
+        function stopGame() { if (!gameRunning) return; console.log("Stopping game..."); gameRunning = false; if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; } enableButtons(); }
+
+        // --- Updated Button Enabling/Disabling ---
+        function disableButtons() { trainButton.disabled = true; playAiButton.disabled = true; resetButton.disabled = true; }
+        function enableButtons() { trainButton.disabled = false; playAiButton.disabled = false; resetButton.disabled = false; }
+
+        // --- Event Listeners ---
+        trainButton.addEventListener('click', startTraining);
+        playAiButton.addEventListener('click', () => { rlAgent.epsilon = 0.0; console.log("Setting AI to play (Epsilon=0)"); startGame(); });
+        resetButton.addEventListener('click', resetGame);
+
+        // --- Initial Setup ---
+        window.onload = () => { resetGame(); console.log("Pong game initialized. Ready to train or play vs AI."); };
+
+    </script>
+</body>
+</html>
