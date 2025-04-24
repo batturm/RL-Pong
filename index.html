@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RL Pong - AI Only (50k)</title> <script src="https://cdn.tailwindcss.com"></script>
+    <title>RL Pong</title> <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <style>
         body {
@@ -203,8 +203,6 @@
              const opponentCenter = opponentY + PADDLE_HEIGHT / 2; const opponentTargetY = ballY; if (opponentCenter < opponentTargetY - PADDLE_HEIGHT * 0.2) opponentY += PADDLE_SPEED * 0.8; else if (opponentCenter > opponentTargetY + PADDLE_HEIGHT * 0.2) opponentY -= PADDLE_SPEED * 0.8; opponentY = Math.max(0, Math.min(canvas.height - PADDLE_HEIGHT, opponentY));
              return { nextState: getCurrentState(), reward: trainingMode ? reward : 0, done: done };
         }
-
-         // --- Player Control (Mouse) --- REMOVED ---
 
 
         // --- Win Condition --- (Simplified winner text)
